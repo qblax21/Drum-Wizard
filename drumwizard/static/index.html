@@ -53,7 +53,14 @@ td input[type=number]{width:70px;padding:4px 6px;background:var(--bg);border:1px
     <div class="row" style="margin-bottom:12px">
       <button id="play">Play</button>
       <span id="meta" style="color:var(--mute)"></span>
-      <span style="color:var(--mute);font-size:13px">Click a hit to remove it. Click empty space to seek.</span>
+      <span style="color:var(--mute);font-size:13px">Click a hit to select it, click empty space to seek.</span>
+    </div>
+    <div id="editbar" class="row hidden" style="margin-bottom:12px;padding:8px 10px;border:1px solid var(--acc);border-radius:8px">
+      <span id="selInfo"></span>
+      <label>Change to <select id="reassign"></select></label>
+      <button class="ghost" id="del">Delete hit</button>
+      <button class="ghost" id="auditSel">▶ Hear it</button>
+      <span style="color:var(--mute);font-size:13px">Keys: 1–7 reassign, Del remove, ←/→ previous/next hit, Esc deselect</span>
     </div>
     <div id="timeline"><canvas id="cv"></canvas></div>
   </section>
@@ -87,7 +94,7 @@ const COLORS={kick:'#e8590c',snare:'#1c7ed6',tom_low:'#2f9e44',tom_high:'#74b816
 const LABEL={kick:'Kick',snare:'Snare',tom_low:'Low tom',tom_high:'High tom',hihat_closed:'Hi-hat (closed)',hihat_open:'Hi-hat (open)',cymbal:'Cymbal / crash'};
 const ORDER=Object.keys(COLORS);
 const $=id=>document.getElementById(id);
-let job=null,hits=[],notes={},audio=null,ctx=null,buffers={},pxPerSec=80;
+let sel=-1,job=null,hits=[],notes={},audio=null,ctx=null,buffers={},pxPerSec=80;
 
 const drop=$('drop'),file=$('file');
 drop.onclick=()=>file.click();
@@ -115,7 +122,7 @@ async function start(f){
 }
 
 async function show(){
-  hits=job.hits.map(h=>({...h}));notes={...job.default_notes};
+  sel=-1;$('editbar').classList.add('hidden');hits=job.hits.map(h=>({...h}));notes={...job.default_notes};
   if(audio)audio.pause();
   audio=new Audio('/api/jobs/'+job.id+'/audio');
   ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
@@ -162,10 +169,11 @@ function draw(){
   lanes.forEach((p,i)=>{
     g2.fillStyle=i%2?'transparent':'rgba(128,128,128,.07)';g2.fillRect(0,i*laneH,w,laneH);
   });
-  for(const ht of hits){
+  hits.forEach((ht,k)=>{
     const i=lanes.indexOf(ht.piece),x=ht.time*pxPerSec,hh=6+ht.velocity/127*(laneH-12);
     g2.fillStyle=COLORS[ht.piece];g2.fillRect(x-1.5,i*laneH+(laneH-hh)/2,3,hh);
-  }
+    if(k===sel){g2.strokeStyle=css.color;g2.lineWidth=1.5;g2.strokeRect(x-6,i*laneH+2,12,laneH-4)}
+  });
   g2.globalAlpha=.55;g2.fillStyle=css.color;g2.font='11px system-ui';
   const sx=$('timeline').scrollLeft;
   lanes.forEach((p,i)=>g2.fillText(LABEL[p],sx+6,i*laneH+13));
@@ -176,10 +184,50 @@ function draw(){
 $('timeline').onscroll=()=>draw();
 cv.onclick=e=>{
   const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,lane=Math.floor(y/34);
-  const idx=hits.findIndex(h=>ORDER.indexOf(h.piece)===lane&&Math.abs(h.time*pxPerSec-x)<5);
-  if(idx>=0){hits.splice(idx,1);$('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;renderPieces();draw()}
-  else{audio.currentTime=x/pxPerSec;draw()}
+  let best=-1,bd=7;
+  hits.forEach((h,k)=>{const d=Math.abs(h.time*pxPerSec-x);if(ORDER.indexOf(h.piece)===lane&&d<bd){bd=d;best=k}});
+  if(best>=0)select(best);else{select(-1);audio.currentTime=x/pxPerSec;draw()}
 };
+function select(k){
+  sel=k;const bar=$('editbar');
+  if(k<0){bar.classList.add('hidden');draw();return}
+  const h=hits[k];bar.classList.remove('hidden');
+  $('selInfo').innerHTML=`<span class="dot" style="background:${COLORS[h.piece]}"></span><b>${LABEL[h.piece]}</b> at ${h.time.toFixed(2)}s`;
+  const rs=$('reassign');rs.innerHTML='';
+  ORDER.forEach((p,i)=>rs.add(new Option(`${i+1}. ${LABEL[p]}`,p,false,p===h.piece)));
+  draw();
+}
+function edited(){
+  $('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;
+  renderPieces();draw();
+  clearTimeout(edited.t);edited.t=setTimeout(refreshSamples,400);
+}
+async function refreshSamples(){
+  const r=await fetch(`/api/jobs/${job.id}/samples`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hits})});
+  const {pieces}=await r.json();
+  const nb={};
+  await Promise.all(pieces.map(async p=>{
+    const ab=await (await fetch(`/api/jobs/${job.id}/samples/${p}.wav?${Date.now()}`)).arrayBuffer();
+    nb[p]=await ctx.decodeAudioData(ab);
+  }));
+  buffers=nb;renderPieces();
+}
+function reassign(p){if(sel<0||hits[sel].piece===p)return;hits[sel].piece=p;select(sel);edited()}
+function removeSel(){if(sel<0)return;hits.splice(sel,1);select(-1);edited()}
+$('reassign').onchange=e=>reassign(e.target.value);
+$('del').onclick=removeSel;
+$('auditSel').onclick=()=>{if(sel>=0)trigger(hits[sel].piece,hits[sel].velocity)};
+document.addEventListener('keydown',e=>{
+  if(sel<0||/INPUT|SELECT/.test(document.activeElement.tagName)&&e.key.length===1)return;
+  if(e.key>='1'&&e.key<='7')reassign(ORDER[+e.key-1]);
+  else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();removeSel()}
+  else if(e.key==='Escape')select(-1);
+  else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){
+    e.preventDefault();
+    const order=hits.map((h,k)=>k).sort((a,b)=>hits[a].time-hits[b].time),i=order.indexOf(sel);
+    select(order[Math.max(0,Math.min(order.length-1,i+(e.key==='ArrowRight'?1:-1)))]);
+  }
+});
 $('play').onclick=()=>{
   if(audio.paused){audio.play();$('play').textContent='Pause';tick()}else{audio.pause();$('play').textContent='Play'}
 };

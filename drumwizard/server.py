@@ -10,7 +10,9 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .export import write_midi
+import soundfile as sf
+
+from .export import write_midi, write_samples
 from .gm import GM_NOTES
 from .pieces import Hit
 from .pipeline import run_pipeline
@@ -65,6 +67,22 @@ def sample(job_id: str, piece: str):
     if not p.exists():
         raise HTTPException(404)
     return FileResponse(p, media_type="audio/wav")
+
+
+class SamplesReq(BaseModel):
+    hits: list[dict]
+
+
+@app.post("/api/jobs/{job_id}/samples")
+def rebuild_samples(job_id: str, req: SamplesReq):
+    """Re-slice one-shot samples after the user edits hit labels; returns pieces that have a sample."""
+    _job(job_id)
+    out = WORK / job_id / "out"
+    y, sr = sf.read(str(out / "drums.wav"), dtype="float32")
+    for old in (out / "samples").glob("*.wav"):
+        old.unlink()
+    paths = write_samples(y, sr, [Hit(**h) for h in req.hits], out / "samples")
+    return {"pieces": list(paths)}
 
 
 class MidiReq(BaseModel):
