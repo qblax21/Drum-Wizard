@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drum Wizard</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--ink:#1d1d1f;--mute:#6b6b70;--line:#e3e1dc;--acc:#d9480f;--lane:#faf9f6}
+@media (prefers-color-scheme:dark){:root{--bg:#141416;--card:#1e1e21;--ink:#ececee;--mute:#9a9aa1;--line:#2e2e33;--acc:#ff8a4c;--lane:#19191b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 12px}
+p.sub{color:var(--mute);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+#drop{border:2px dashed var(--line);border-radius:12px;padding:32px;text-align:center;cursor:pointer;color:var(--mute)}
+#drop.over{border-color:var(--acc);color:var(--ink)}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.hidden{display:none}
+#timeline{position:relative;overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--lane)}
+canvas{display:block;cursor:pointer}
+table{width:100%;border-collapse:collapse}
+td,th{text-align:left;padding:8px 6px;border-top:1px solid var(--line)}th{border:0;color:var(--mute);font-weight:500;font-size:13px}
+td input[type=number]{width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--line);border-radius:6px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px}
+#status{color:var(--mute)}.err{color:#c92a2a}
+.kit{padding:3px 9px;border-radius:99px;font-size:13px;border:1px solid var(--line);color:var(--mute)}
+.kit.on{color:var(--ink);border-color:var(--acc)}
+@keyframes flash{from{background:var(--acc)}to{background:transparent}}.flash{animation:flash .25s}
+</style>
+</head>
+<body>
+<main>
+<h1>Drum Wizard</h1>
+<p class="sub">Split a song's drums into individual drum sounds and map them to your e-drum kit.</p>
+
+<section class="card" id="upload">
+  <div id="drop">Drop a song here, or click to choose a file</div>
+  <input type="file" id="file" accept="audio/*" class="hidden">
+  <div class="row" style="margin-top:12px">
+    <label><input type="checkbox" id="isStem"> File is already an isolated drum track (skip separation)</label>
+    <span id="status"></span>
+  </div>
+</section>
+
+<div id="result" class="hidden">
+  <section class="card">
+    <h2>Drum track &amp; detected hits</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button id="play">Play</button>
+      <span id="meta" style="color:var(--mute)"></span>
+      <span style="color:var(--mute);font-size:13px">Click a hit to remove it. Click empty space to seek.</span>
+    </div>
+    <div id="timeline"><canvas id="cv"></canvas></div>
+  </section>
+
+  <section class="card">
+    <h2>Drum pieces &amp; MIDI mapping</h2>
+    <table>
+      <thead><tr><th>Piece</th><th>Hits</th><th>Sample</th><th>MIDI note</th></tr></thead>
+      <tbody id="pieces"></tbody>
+    </table>
+    <div class="row" style="margin-top:14px">
+      <button id="dl">Download MIDI file</button>
+      <span style="color:var(--mute);font-size:13px">Notes here are used for the .mid file and for matching your kit below.</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Play with your e-drum kit</h2>
+    <p style="margin:0 0 10px;color:var(--mute)">Connect the kit over USB-MIDI. Hits from the kit trigger the extracted samples. Needs a browser with Web MIDI (Chrome, Edge). Set each piece's note above to what your kit sends.</p>
+    <div class="row">
+      <button id="midiBtn" class="ghost">Connect MIDI</button>
+      <select id="midiIn" class="hidden"></select>
+      <span id="midiMsg" style="color:var(--mute)"></span>
+    </div>
+  </section>
+</div>
+</main>
+
+<script>
+const COLORS={kick:'#e8590c',snare:'#1c7ed6',tom_low:'#2f9e44',tom_high:'#74b816',hihat_closed:'#f59f00',hihat_open:'#fcc419',cymbal:'#ae3ec9'};
+const LABEL={kick:'Kick',snare:'Snare',tom_low:'Low tom',tom_high:'High tom',hihat_closed:'Hi-hat (closed)',hihat_open:'Hi-hat (open)',cymbal:'Cymbal / crash'};
+const ORDER=Object.keys(COLORS);
+const $=id=>document.getElementById(id);
+let job=null,hits=[],notes={},audio=null,ctx=null,buffers={},pxPerSec=80;
+
+const drop=$('drop'),file=$('file');
+drop.onclick=()=>file.click();
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
+drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');if(e.dataTransfer.files[0])start(e.dataTransfer.files[0])};
+file.onchange=()=>file.files[0]&&start(file.files[0]);
+
+async function start(f){
+  $('result').classList.add('hidden');
+  const setStatus=(t,err)=>{$('status').textContent=t;$('status').className=err?'err':''};
+  setStatus('Uploading '+f.name+'…');
+  const fd=new FormData();fd.append('file',f);fd.append('is_stem',$('isStem').checked);
+  const r=await fetch('/api/jobs',{method:'POST',body:fd});
+  const {id}=await r.json();
+  const t0=Date.now();
+  while(true){
+    await new Promise(r=>setTimeout(r,1000));
+    job=await (await fetch('/api/jobs/'+id)).json();
+    if(job.status==='error'){setStatus('Failed: '+job.error,true);return}
+    if(job.status==='done')break;
+    setStatus(`Separating drums… ${Math.round((Date.now()-t0)/1000)}s (this can take a few minutes for a full song)`);
+  }
+  job.id=id;setStatus('Done.');show();
+}
+
+async function show(){
+  hits=job.hits.map(h=>({...h}));notes={...job.default_notes};
+  if(audio)audio.pause();
+  audio=new Audio('/api/jobs/'+job.id+'/audio');
+  ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
+  buffers={};
+  $('result').classList.remove('hidden');
+  $('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;
+  const present=ORDER.filter(p=>hits.some(h=>h.piece===p));
+  await Promise.all(present.map(async p=>{
+    const ab=await (await fetch(`/api/jobs/${job.id}/samples/${p}.wav`)).arrayBuffer();
+    buffers[p]=await ctx.decodeAudioData(ab);
+  }));
+  renderPieces();draw();
+}
+
+function renderPieces(){
+  const tb=$('pieces');tb.innerHTML='';
+  for(const p of ORDER){
+    const n=hits.filter(h=>h.piece===p).length;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><span class="dot" style="background:${COLORS[p]}"></span>${LABEL[p]}</td><td>${n}</td>
+      <td>${buffers[p]?'<button class="ghost" data-p="'+p+'">▶ Audition</button>':'<span style="color:var(--mute)">none found</span>'}</td>
+      <td><input type="number" min="0" max="127" value="${notes[p]}" data-n="${p}"></td>`;
+    tb.appendChild(tr);
+  }
+  tb.querySelectorAll('button').forEach(b=>b.onclick=()=>trigger(b.dataset.p,100));
+  tb.querySelectorAll('input').forEach(i=>i.onchange=()=>{notes[i.dataset.n]=Math.max(0,Math.min(127,+i.value||0))});
+}
+
+function trigger(piece,vel){
+  const b=buffers[piece];if(!b)return;
+  if(ctx.state==='suspended')ctx.resume();
+  const s=ctx.createBufferSource(),g=ctx.createGain();
+  s.buffer=b;g.gain.value=vel/127;s.connect(g).connect(ctx.destination);s.start();
+}
+
+/* timeline */
+const cv=$('cv'),g2=cv.getContext('2d');
+function draw(){
+  const lanes=ORDER,laneH=34,dpr=devicePixelRatio||1;
+  const w=Math.max(600,Math.ceil(job.duration*pxPerSec)),h=lanes.length*laneH;
+  cv.width=w*dpr;cv.height=h*dpr;cv.style.width=w+'px';cv.style.height=h+'px';
+  g2.setTransform(dpr,0,0,dpr,0,0);g2.clearRect(0,0,w,h);
+  const css=getComputedStyle(document.body);
+  lanes.forEach((p,i)=>{
+    g2.fillStyle=i%2?'transparent':'rgba(128,128,128,.07)';g2.fillRect(0,i*laneH,w,laneH);
+  });
+  for(const ht of hits){
+    const i=lanes.indexOf(ht.piece),x=ht.time*pxPerSec,hh=6+ht.velocity/127*(laneH-12);
+    g2.fillStyle=COLORS[ht.piece];g2.fillRect(x-1.5,i*laneH+(laneH-hh)/2,3,hh);
+  }
+  g2.globalAlpha=.55;g2.fillStyle=css.color;g2.font='11px system-ui';
+  const sx=$('timeline').scrollLeft;
+  lanes.forEach((p,i)=>g2.fillText(LABEL[p],sx+6,i*laneH+13));
+  g2.globalAlpha=.9;
+  if(audio)g2.fillRect(audio.currentTime*pxPerSec,0,1.5,h);
+  g2.globalAlpha=1;
+}
+$('timeline').onscroll=()=>draw();
+cv.onclick=e=>{
+  const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,lane=Math.floor(y/34);
+  const idx=hits.findIndex(h=>ORDER.indexOf(h.piece)===lane&&Math.abs(h.time*pxPerSec-x)<5);
+  if(idx>=0){hits.splice(idx,1);$('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;renderPieces();draw()}
+  else{audio.currentTime=x/pxPerSec;draw()}
+};
+$('play').onclick=()=>{
+  if(audio.paused){audio.play();$('play').textContent='Pause';tick()}else{audio.pause();$('play').textContent='Play'}
+};
+function tick(){if(audio.paused)return;draw();
+  const t=$('timeline'),x=audio.currentTime*pxPerSec;
+  if(x<t.scrollLeft||x>t.scrollLeft+t.clientWidth-40)t.scrollLeft=x-40;
+  requestAnimationFrame(tick)}
+
+$('dl').onclick=async()=>{
+  const r=await fetch(`/api/jobs/${job.id}/midi`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({notes,hits,bpm:job.bpm})});
+  const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());
+  a.download=(job.name||'drums').replace(/\.[^.]+$/,'')+'-drums.mid';a.click();
+};
+
+/* Web MIDI: kit -> samples */
+let access=null;
+$('midiBtn').onclick=async()=>{
+  if(!navigator.requestMIDIAccess){$('midiMsg').textContent='This browser has no Web MIDI. Use Chrome or Edge.';return}
+  try{access=await navigator.requestMIDIAccess()}catch(e){$('midiMsg').textContent='MIDI access was denied.';return}
+  const sel=$('midiIn');sel.innerHTML='';
+  const ins=[...access.inputs.values()];
+  if(!ins.length){$('midiMsg').textContent='No MIDI devices found. Plug in your kit and click again.';return}
+  ins.forEach(i=>sel.add(new Option(i.name,i.id)));sel.classList.remove('hidden');
+  const bind=()=>{access.inputs.forEach(i=>i.onmidimessage=null);
+    const inp=access.inputs.get(sel.value);inp.onmidimessage=m=>{
+      const [st,note,vel]=m.data;
+      if((st&0xf0)!==0x90||!vel)return;
+      const p=ORDER.find(k=>notes[k]===note);
+      if(p){trigger(p,vel);const row=$('pieces').children[ORDER.indexOf(p)];row.classList.remove('flash');void row.offsetWidth;row.classList.add('flash')}
+    };$('midiMsg').textContent='Listening to '+inp.name}
+  sel.onchange=bind;bind();
+};
+</script>
+</body>
+</html>

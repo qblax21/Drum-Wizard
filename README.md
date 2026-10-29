@@ -13,10 +13,12 @@ Song -> drum stem -> individual drum pieces -> MIDI / triggerable samples.
 pip install -e '.[separation,live]'
 drumwizard song.mp3 -o out          # full pipeline
 drumwizard drums.wav --stem -o out  # skip Demucs if you already have a drum stem
+drumwizard-ui                        # web UI (pip install -e '.[server]')
 ```
 
 ## Status / next steps
 - Done: pipeline skeleton, MIDI export, sample slicing, synthetic-audio test.
 - Piece classification is a rule-based baseline; thresholds need tuning on real recordings.
   The next upgrade is a learned model (e.g. a DrumSep-style per-piece separator) behind `classify_hit`.
-- Not built yet: desktop UI (planned: local FastAPI backend + Tauri/web frontend), note-map editor, `live.py` untested without hardware.
+- Done: local web UI (`drumwizard-ui`, then open http://127.0.0.1:8765): upload, hit timeline with playback, delete wrong hits, audition samples, per-piece MIDI note map, MIDI download, and live kit triggering through browser Web MIDI (Chrome/Edge).
+- Not built yet: a packaged desktop shell (Tauri/Electron), moving a hit to a different piece in the UI, `live.py` and Web MIDI untested without hardware.

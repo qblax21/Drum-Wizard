@@ -13,9 +13,14 @@ dev = ["pytest"]
 
 [project.scripts]
 drumwizard = "drumwizard.cli:main"
+drumwizard-ui = "drumwizard.server:main"
 
 [tool.setuptools]
 packages = ["drumwizard"]
 
+[tool.setuptools.package-data]
+drumwizard = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
