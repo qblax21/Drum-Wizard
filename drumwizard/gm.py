@@ -10,3 +10,6 @@ GM_NOTES = {
     "cymbal": 49,  # crash
 }
 PIECES = list(GM_NOTES)
+
+# Notes used when the UI splits "cymbal" into separate cymbals (variant 0,1,2): crash 1, crash 2, ride
+CYMBAL_VARIANT_NOTES = {"cymbal_0": 49, "cymbal_1": 57, "cymbal_2": 51}

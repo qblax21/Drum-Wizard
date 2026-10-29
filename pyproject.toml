@@ -3,7 +3,7 @@ name = "drumwizard"
 version = "0.1.0"
 description = "Split a song's drums into individual drum sounds and map them to MIDI / e-drum kits"
 requires-python = ">=3.10"
-dependencies = ["numpy", "scipy", "soundfile", "librosa", "mido"]
+dependencies = ["numpy", "scipy", "soundfile", "librosa", "mido", "scikit-learn"]
 
 [project.optional-dependencies]
 separation = ["demucs", "torch", "torchaudio"]   # stage 1: song -> drum stem

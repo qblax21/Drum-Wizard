@@ -9,6 +9,13 @@ from .gm import GM_NOTES
 from .pieces import Hit
 
 
+def note_for(hit: Hit, notes: dict) -> int:
+    """Per-cymbal note if the caller mapped one (split mode), else the shared piece note."""
+    if hit.piece == "cymbal" and f"cymbal_{hit.variant}" in notes:
+        return notes[f"cymbal_{hit.variant}"]
+    return notes[hit.piece]
+
+
 def write_midi(hits: list[Hit], path: str | Path, bpm: float = 120.0, notes: dict | None = None) -> None:
     notes = notes or GM_NOTES
     tpb = 480
@@ -19,7 +26,7 @@ def write_midi(hits: list[Hit], path: str | Path, bpm: float = 120.0, notes: dic
     events = []
     for h in hits:
         t = int(round(h.time * bpm / 60 * tpb))
-        n = notes[h.piece]
+        n = note_for(h, notes)
         events += [(t, 1, mido.Message("note_on", channel=9, note=n, velocity=h.velocity)),
                    (t + tpb // 8, 0, mido.Message("note_off", channel=9, note=n, velocity=0))]
     last = 0
@@ -29,24 +36,36 @@ def write_midi(hits: list[Hit], path: str | Path, bpm: float = 120.0, notes: dic
     mid.save(str(path))
 
 
+def _sample_key(h: Hit) -> str:
+    return f"cymbal_{h.variant}" if h.piece == "cymbal" else h.piece
+
+
 def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path) -> dict[str, Path]:
-    """Save the cleanest (loudest, least-bleeding) hit of each piece as a one-shot WAV."""
+    """Save the cleanest (loudest, least-bleeding) hit of each piece as a one-shot WAV.
+
+    Cymbals get a combined `cymbal.wav` plus one `cymbal_<n>.wav` per detected variant.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    def better(h, cur):
+        return cur is None or h.velocity > cur.velocity or (
+            h.velocity == cur.velocity and h.end - h.start > cur.end - cur.start)
+
     best: dict[str, Hit] = {}
     for h in hits:
-        if h.piece not in best or h.velocity > best[h.piece].velocity or (
-            h.velocity == best[h.piece].velocity and h.end - h.start > best[h.piece].end - best[h.piece].start
-        ):
-            best[h.piece] = h
+        keys = [h.piece] + ([_sample_key(h)] if h.piece == "cymbal" else [])
+        for k in keys:
+            if better(h, best.get(k)):
+                best[k] = h
     paths = {}
-    for piece, h in best.items():
+    for key, h in best.items():
         seg = y[h.start:h.end].copy()
         fade = min(len(seg), int(0.01 * sr))
         if fade:
             seg[-fade:] *= np.linspace(1, 0, fade)
         seg /= np.abs(seg).max() + 1e-12
-        p = out_dir / f"{piece}.wav"
+        p = out_dir / f"{key}.wav"
         sf.write(str(p), seg, sr)
-        paths[piece] = p
+        paths[key] = p
     return paths

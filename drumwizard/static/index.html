@@ -60,13 +60,14 @@ td input[type=number]{width:70px;padding:4px 6px;background:var(--bg);border:1px
       <label>Change to <select id="reassign"></select></label>
       <button class="ghost" id="del">Delete hit</button>
       <button class="ghost" id="auditSel">▶ Hear it</button>
-      <span style="color:var(--mute);font-size:13px">Keys: 1–7 reassign, Del remove, ←/→ previous/next hit, Esc deselect</span>
+      <span style="color:var(--mute);font-size:13px">Keys: 1–9 reassign, Del remove, ←/→ previous/next hit, Esc deselect</span>
     </div>
     <div id="timeline"><canvas id="cv"></canvas></div>
   </section>
 
   <section class="card">
     <h2>Drum pieces &amp; MIDI mapping</h2>
+    <label id="splitRow" class="hidden" style="display:none;margin-bottom:10px"><input type="checkbox" id="split"> <span id="splitTxt"></span></label>
     <table>
       <thead><tr><th>Piece</th><th>Hits</th><th>Sample</th><th>MIDI note</th></tr></thead>
       <tbody id="pieces"></tbody>
@@ -90,11 +91,15 @@ td input[type=number]{width:70px;padding:4px 6px;background:var(--bg);border:1px
 </main>
 
 <script>
-const COLORS={kick:'#e8590c',snare:'#1c7ed6',tom_low:'#2f9e44',tom_high:'#74b816',hihat_closed:'#f59f00',hihat_open:'#fcc419',cymbal:'#ae3ec9'};
-const LABEL={kick:'Kick',snare:'Snare',tom_low:'Low tom',tom_high:'High tom',hihat_closed:'Hi-hat (closed)',hihat_open:'Hi-hat (open)',cymbal:'Cymbal / crash'};
-const ORDER=Object.keys(COLORS);
+const COLORS={kick:'#e8590c',snare:'#1c7ed6',tom_low:'#2f9e44',tom_high:'#74b816',hihat_closed:'#f59f00',hihat_open:'#fcc419',cymbal:'#ae3ec9',cymbal_0:'#ae3ec9',cymbal_1:'#7048e8',cymbal_2:'#d6336c'};
+const LABEL={kick:'Kick',snare:'Snare',tom_low:'Low tom',tom_high:'High tom',hihat_closed:'Hi-hat (closed)',hihat_open:'Hi-hat (open)',cymbal:'Cymbal / crash',cymbal_0:'Cymbal 1 (darker)',cymbal_1:'Cymbal 2',cymbal_2:'Cymbal 3 (brightest)'};
+const BASE=['kick','snare','tom_low','tom_high','hihat_closed','hihat_open'];
+let ORDER=[...BASE,'cymbal'];
+const keyOf=h=>split&&h.piece==='cymbal'?'cymbal_'+(h.variant||0):h.piece;
+function setLanes(){const n=nCym();ORDER=[...BASE,...(split&&n>1?[...Array(n).keys()].map(i=>'cymbal_'+i):['cymbal'])]}
+function nCym(){return hits.reduce((m,h)=>h.piece==='cymbal'?Math.max(m,(h.variant||0)+1):m,0)}
 const $=id=>document.getElementById(id);
-let sel=-1,job=null,hits=[],notes={},audio=null,ctx=null,buffers={},pxPerSec=80;
+let split=false,sel=-1,job=null,hits=[],notes={},audio=null,ctx=null,buffers={},pxPerSec=80;
 
 const drop=$('drop'),file=$('file');
 drop.onclick=()=>file.click();
@@ -122,25 +127,35 @@ async function start(f){
 }
 
 async function show(){
-  sel=-1;$('editbar').classList.add('hidden');hits=job.hits.map(h=>({...h}));notes={...job.default_notes};
+  sel=-1;split=false;$('split').checked=false;$('editbar').classList.add('hidden');hits=job.hits.map(h=>({...h}));notes={...job.default_notes};setLanes();
   if(audio)audio.pause();
   audio=new Audio('/api/jobs/'+job.id+'/audio');
   ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
   buffers={};
   $('result').classList.remove('hidden');
   $('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;
-  const present=ORDER.filter(p=>hits.some(h=>h.piece===p));
-  await Promise.all(present.map(async p=>{
-    const ab=await (await fetch(`/api/jobs/${job.id}/samples/${p}.wav`)).arrayBuffer();
-    buffers[p]=await ctx.decodeAudioData(ab);
-  }));
+  await loadBuffers();
   renderPieces();draw();
 }
 
+async function loadBuffers(){
+  const keys=[...BASE,'cymbal',...[0,1,2].map(i=>'cymbal_'+i)],nb={};
+  await Promise.all(keys.map(async p=>{
+    const r=await fetch(`/api/jobs/${job.id}/samples/${p}.wav?${Date.now()}`);
+    if(r.ok)nb[p]=await ctx.decodeAudioData(await r.arrayBuffer());
+  }));
+  buffers=nb;
+}
+function updateSplitRow(){
+  const n=nCym(),row=$('splitRow');
+  row.style.display=n>1?'block':'none';
+  $('splitTxt').textContent=`Split cymbals — ${n} distinct cymbals found (each gets its own lane and MIDI note)`;
+}
 function renderPieces(){
+  updateSplitRow();
   const tb=$('pieces');tb.innerHTML='';
   for(const p of ORDER){
-    const n=hits.filter(h=>h.piece===p).length;
+    const n=hits.filter(h=>keyOf(h)===p).length;
     const tr=document.createElement('tr');
     tr.innerHTML=`<td><span class="dot" style="background:${COLORS[p]}"></span>${LABEL[p]}</td><td>${n}</td>
       <td>${buffers[p]?'<button class="ghost" data-p="'+p+'">▶ Audition</button>':'<span style="color:var(--mute)">none found</span>'}</td>
@@ -170,8 +185,8 @@ function draw(){
     g2.fillStyle=i%2?'transparent':'rgba(128,128,128,.07)';g2.fillRect(0,i*laneH,w,laneH);
   });
   hits.forEach((ht,k)=>{
-    const i=lanes.indexOf(ht.piece),x=ht.time*pxPerSec,hh=6+ht.velocity/127*(laneH-12);
-    g2.fillStyle=COLORS[ht.piece];g2.fillRect(x-1.5,i*laneH+(laneH-hh)/2,3,hh);
+    const i=lanes.indexOf(keyOf(ht)),x=ht.time*pxPerSec,hh=6+ht.velocity/127*(laneH-12);
+    g2.fillStyle=COLORS[keyOf(ht)];g2.fillRect(x-1.5,i*laneH+(laneH-hh)/2,3,hh);
     if(k===sel){g2.strokeStyle=css.color;g2.lineWidth=1.5;g2.strokeRect(x-6,i*laneH+2,12,laneH-4)}
   });
   g2.globalAlpha=.55;g2.fillStyle=css.color;g2.font='11px system-ui';
@@ -185,41 +200,45 @@ $('timeline').onscroll=()=>draw();
 cv.onclick=e=>{
   const r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,lane=Math.floor(y/34);
   let best=-1,bd=7;
-  hits.forEach((h,k)=>{const d=Math.abs(h.time*pxPerSec-x);if(ORDER.indexOf(h.piece)===lane&&d<bd){bd=d;best=k}});
+  hits.forEach((h,k)=>{const d=Math.abs(h.time*pxPerSec-x);if(ORDER.indexOf(keyOf(h))===lane&&d<bd){bd=d;best=k}});
   if(best>=0)select(best);else{select(-1);audio.currentTime=x/pxPerSec;draw()}
 };
 function select(k){
   sel=k;const bar=$('editbar');
   if(k<0){bar.classList.add('hidden');draw();return}
   const h=hits[k];bar.classList.remove('hidden');
-  $('selInfo').innerHTML=`<span class="dot" style="background:${COLORS[h.piece]}"></span><b>${LABEL[h.piece]}</b> at ${h.time.toFixed(2)}s`;
+  $('selInfo').innerHTML=`<span class="dot" style="background:${COLORS[keyOf(h)]}"></span><b>${LABEL[keyOf(h)]}</b> at ${h.time.toFixed(2)}s`;
   const rs=$('reassign');rs.innerHTML='';
-  ORDER.forEach((p,i)=>rs.add(new Option(`${i+1}. ${LABEL[p]}`,p,false,p===h.piece)));
+  ORDER.forEach((p,i)=>rs.add(new Option(`${i+1}. ${LABEL[p]}`,p,false,p===keyOf(h))));
   draw();
 }
 function edited(){
+  setLanes();
   $('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;
   renderPieces();draw();
   clearTimeout(edited.t);edited.t=setTimeout(refreshSamples,400);
 }
 async function refreshSamples(){
   const r=await fetch(`/api/jobs/${job.id}/samples`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hits})});
-  const {pieces}=await r.json();
-  const nb={};
-  await Promise.all(pieces.map(async p=>{
-    const ab=await (await fetch(`/api/jobs/${job.id}/samples/${p}.wav?${Date.now()}`)).arrayBuffer();
-    nb[p]=await ctx.decodeAudioData(ab);
-  }));
-  buffers=nb;renderPieces();
+  await r.json();
+  await loadBuffers();
+  renderPieces();
 }
-function reassign(p){if(sel<0||hits[sel].piece===p)return;hits[sel].piece=p;select(sel);edited()}
+function reassign(p){
+  if(sel<0||keyOf(hits[sel])===p)return;
+  const h=hits[sel];
+  if(p.startsWith('cymbal')){const v=p.split('_')[1];h.piece='cymbal';if(v!==undefined)h.variant=+v}
+  else{h.piece=p;h.variant=0}
+  select(sel);edited()
+}
 function removeSel(){if(sel<0)return;hits.splice(sel,1);select(-1);edited()}
 $('reassign').onchange=e=>reassign(e.target.value);
+$('split').onchange=e=>{split=e.target.checked;sel=-1;$('editbar').classList.add('hidden');setLanes();renderPieces();draw()};
 $('del').onclick=removeSel;
 $('auditSel').onclick=()=>{if(sel>=0)trigger(hits[sel].piece,hits[sel].velocity)};
 document.addEventListener('keydown',e=>{
   if(sel<0||/INPUT|SELECT/.test(document.activeElement.tagName)&&e.key.length===1)return;
-  if(e.key>='1'&&e.key<='7')reassign(ORDER[+e.key-1]);
+  if(e.key>='1'&&e.key<='9'&&ORDER[+e.key-1])reassign(ORDER[+e.key-1]);
   else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();removeSel()}
   else if(e.key==='Escape')select(-1);
   else if(e.key==='ArrowRight'||e.key==='ArrowLeft'){
@@ -238,7 +257,7 @@ function tick(){if(audio.paused)return;draw();
 
 $('dl').onclick=async()=>{
   const r=await fetch(`/api/jobs/${job.id}/midi`,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({notes,hits,bpm:job.bpm})});
+    body:JSON.stringify({notes:split&&nCym()>1?notes:Object.fromEntries(Object.entries(notes).filter(([k])=>!/^cymbal_/.test(k))),hits,bpm:job.bpm})});
   const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());
   a.download=(job.name||'drums').replace(/\.[^.]+$/,'')+'-drums.mid';a.click();
 };

@@ -21,4 +21,5 @@ drumwizard-ui                        # web UI (pip install -e '.[server]')
 - Piece classification is a rule-based baseline; thresholds need tuning on real recordings.
   The next upgrade is a learned model (e.g. a DrumSep-style per-piece separator) behind `classify_hit`.
 - Done: local web UI (`drumwizard-ui`, then open http://127.0.0.1:8765): upload, hit timeline with playback, select a hit to reassign it to another piece or delete it (keys 1-7, Del), audition samples, per-piece MIDI note map, MIDI download, and live kit triggering through browser Web MIDI (Chrome/Edge).
+- Cymbals: stay one "Cymbal / crash" piece by default. If 2-3 clearly different cymbals are detected (by brightness and decay), the UI offers a "Split cymbals" toggle giving each its own lane, sample and MIDI note (49, 57, 51).
 - Not built yet: a packaged desktop shell (Tauri/Electron), `live.py` and Web MIDI untested without hardware.
