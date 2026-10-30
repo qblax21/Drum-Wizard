@@ -49,6 +49,12 @@ def _job(job_id: str) -> dict:
     return JOBS[job_id]
 
 
+@app.get("/api/features")
+def features():
+    import importlib.util
+    return {"drumsep": importlib.util.find_spec("mdxnet_infer") is not None}
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
     return {**_job(job_id), "default_notes": {**GM_NOTES, **CYMBAL_VARIANT_NOTES, **TOM_VARIANT_NOTES}}

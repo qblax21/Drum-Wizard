@@ -111,6 +111,7 @@ drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
 drop.ondragleave=()=>drop.classList.remove('over');
 drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');if(e.dataTransfer.files[0])start(e.dataTransfer.files[0])};
 file.onchange=()=>file.files[0]&&start(file.files[0]);
+fetch('/api/features').then(r=>r.json()).then(f=>{const c=$('drumsep');c.checked=f.drumsep;c.disabled=!f.drumsep;if(!f.drumsep)c.parentElement.title='Install the drumsep extra to enable'}).catch(()=>{});
 
 async function start(f){
   $('result').classList.add('hidden');
@@ -137,7 +138,7 @@ async function show(){
   ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
   buffers={};
   $('result').classList.remove('hidden');
-  $('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;
+  $('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s · DrumSep ${job.drumsep?'ON (samples from separated stems)':'OFF (samples cut from the full mix, expect bleed)'}`;
   await loadBuffers();
   renderPieces();draw();
 }

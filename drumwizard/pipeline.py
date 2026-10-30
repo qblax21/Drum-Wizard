@@ -22,5 +22,5 @@ def run_pipeline(src: str | Path, out: str | Path, is_stem: bool = False, drumse
         hits, sources = detect_hits(y, sr), None
     tempo = float(np.atleast_1d(librosa.beat.beat_track(y=y, sr=sr)[0])[0])
     write_samples(y, sr, hits, out / "samples", sources)
-    return {"bpm": tempo if tempo > 0 else 120.0, "duration": len(y) / sr,
+    return {"bpm": tempo if tempo > 0 else 120.0, "duration": len(y) / sr, "drumsep": drumsep,
             "hits": [asdict(h) for h in hits]}
