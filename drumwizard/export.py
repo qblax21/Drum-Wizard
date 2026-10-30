@@ -6,7 +6,7 @@ import numpy as np
 import soundfile as sf
 
 from .gm import GM_NOTES, TOM_VARIANT_NOTES
-from .pieces import Hit
+from .pieces import Hit, pitch_feats
 
 
 def note_for(hit: Hit, notes: dict) -> int:
@@ -44,7 +44,10 @@ def _sample_key(h: Hit) -> str:
 
 
 # Seconds of undisturbed audio wanted per piece when choosing which hit to cut a sample from.
-SAMPLE_WANT = {"kick": 0.25, "snare": 0.3, "tom": 0.35, "hihat_closed": 0.12, "hihat_open": 0.3, "cymbal": 1.0}
+SAMPLE_WANT = {"kick": 0.25, "snare": 0.3, "tom": 0.35, "hihat_closed": 0.12, "hihat_open": 0.3, "cymbal": 1.0, "ride": 1.0}
+SAMPLE_MAX = {"kick": 0.4, "snare": 0.5, "tom": 0.5, "hihat_closed": 0.15, "hihat_open": 0.6, "cymbal": 2.5, "ride": 2.0}
+TAIL_DB = {"kick": 0.01, "snare": 0.01, "tom": 0.02}   # trim to this fraction of peak (stem bleed rings on below it)
+NO_REATTACK = ("hihat_closed", "hihat_open", "cymbal", "ride")   # sustained pieces: cut where a second hit starts
 COINCIDE = 0.02   # s: another piece landing this close to a hit bleeds into its attack
 
 
@@ -64,6 +67,25 @@ def _room(hits: list[Hit], sr: int) -> list[tuple[bool, int]]:
     return out
 
 
+def _quality(seg: np.ndarray, piece: str, sr: int) -> float:
+    """Tie-breaker between equally roomy hits: fastest-decaying closed hat, most tonal (cleanest-pitched) tom."""
+    if piece == "hihat_closed":
+        a = np.abs(seg[: int(0.12 * sr)])
+        return -float(a[len(a) // 2:].mean() / (a[: len(a) // 4].mean() + 1e-12)) if len(a) > 64 else -1.0
+    if piece == "tom":
+        pf = pitch_feats(seg, sr)
+        return pf[1] - pf[2] if pf else -1.0
+    return 0.0
+
+
+def _cut_reattack(seg: np.ndarray, sr: int) -> np.ndarray:
+    """End a sample where a second hit begins (a rise in the 5 ms envelope after the first 50 ms)."""
+    import librosa
+    on = librosa.onset.onset_detect(y=seg, sr=sr, units="samples", delta=0.08, wait=int(0.02 * sr / 512), backtrack=False)
+    late = [int(s) for s in on if s > int(0.05 * sr)]
+    return seg[: max(late[0] - int(0.004 * sr), 32)] if late else seg
+
+
 def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path,
                   sources: dict[str, np.ndarray] | None = None) -> dict[str, Path]:
     """Save the cleanest hit of each piece as a one-shot WAV.
@@ -75,11 +97,26 @@ def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path,
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    room = _room(hits, sr)
+    # separate stems: other pieces are not bleed, so only the piece's own next onset (hit.end) limits a sample
+    room = [(False, h.end - h.start) for h in hits] if sources else _room(hits, sr)
+
+    def source(h):
+        return sources.get(h.piece, y) if sources else y
+
+    cut: dict[int, np.ndarray] = {}
+
+    def slice_of(i):
+        if i not in cut:
+            h = hits[i]
+            seg = source(h)[h.start:h.start + min(max(room[i][1], 32), int(SAMPLE_MAX.get(h.piece, 1.5) * sr))]
+            cut[i] = _cut_reattack(seg, sr) if h.piece in NO_REATTACK else seg
+        return cut[i]
 
     def score(i):
-        stacked, n = room[i]
-        return (not stacked, min(n, int(SAMPLE_WANT.get(hits[i].piece, 0.3) * sr)), hits[i].velocity)
+        h, stacked = hits[i], room[i][0]
+        seg = slice_of(i)
+        q = _quality(seg, h.piece, sr) if h.piece in ("hihat_closed", "tom") else 0.0
+        return (not stacked, min(len(seg), int(SAMPLE_WANT.get(h.piece, 0.3) * sr)), round(q, 2), h.velocity)
 
     best: dict[str, int] = {}
     for i, h in enumerate(hits):
@@ -90,9 +127,8 @@ def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path,
     paths = {}
     for key, i in best.items():
         h = hits[i]
-        src = sources.get(h.piece, y) if sources else y
-        seg = src[h.start:h.start + max(room[i][1], 32)].copy()
-        loud = np.nonzero(np.abs(seg) > 0.003 * (np.abs(seg).max() + 1e-12))[0]   # drop the silent tail (-50 dB)
+        seg = slice_of(i).copy()
+        loud = np.nonzero(np.abs(seg) > TAIL_DB.get(h.piece, 0.003) * (np.abs(seg).max() + 1e-12))[0]   # drop the quiet tail
         seg = seg[: min(len(seg), int(loud[-1]) + int(0.02 * sr))] if len(loud) else seg
         fade = min(len(seg), int(0.03 * sr))
         if fade:

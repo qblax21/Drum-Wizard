@@ -92,15 +92,15 @@ td input[type=number]{width:70px;padding:4px 6px;background:var(--bg);border:1px
 </main>
 
 <script>
-const COLORS={kick:'#e8590c',snare:'#1c7ed6',tom_0:'#2b8a3e',tom_1:'#37b24d',tom_2:'#51cf66',tom_3:'#74b816',tom_4:'#94d82d',tom_5:'#a9e34b',hihat_closed:'#f59f00',hihat_open:'#fcc419',cymbal:'#ae3ec9',cymbal_0:'#ae3ec9',cymbal_1:'#7048e8',cymbal_2:'#d6336c'};
-const LABEL={kick:'Kick',snare:'Snare',tom_0:'Tom',tom_1:'Tom',tom_2:'Tom',tom_3:'Tom',tom_4:'Tom',tom_5:'Tom',hihat_closed:'Hi-hat (closed)',hihat_open:'Hi-hat (open)',cymbal:'Cymbal / crash',cymbal_0:'Cymbal 1 (darker)',cymbal_1:'Cymbal 2',cymbal_2:'Cymbal 3 (brightest)'};
+const COLORS={kick:'#e8590c',snare:'#1c7ed6',tom_0:'#2b8a3e',tom_1:'#37b24d',tom_2:'#51cf66',tom_3:'#74b816',tom_4:'#94d82d',tom_5:'#a9e34b',hihat_closed:'#f59f00',hihat_open:'#fcc419',cymbal:'#ae3ec9',ride:'#12b886',cymbal_0:'#ae3ec9',cymbal_1:'#7048e8',cymbal_2:'#d6336c'};
+const LABEL={kick:'Kick',snare:'Snare',tom_0:'Tom',tom_1:'Tom',tom_2:'Tom',tom_3:'Tom',tom_4:'Tom',tom_5:'Tom',hihat_closed:'Hi-hat (closed)',hihat_open:'Hi-hat (open)',cymbal:'Cymbal / crash',ride:'Ride',cymbal_0:'Cymbal 1 (darker)',cymbal_1:'Cymbal 2',cymbal_2:'Cymbal 3 (brightest)'};
 const BASE=['kick','snare','hihat_closed','hihat_open'];
 let ORDER=[...BASE,'cymbal'];
 const keyOf=h=>split&&h.piece==='cymbal'?'cymbal_'+(h.variant||0):h.piece==='tom'?'tom_'+(h.variant||0):h.piece;
 function tomSlots(){const u=[...new Set(hits.filter(h=>h.piece==='tom').map(h=>h.variant||0))].sort((a,b)=>b-a);return u.length?u:[2]}
 function setLanes(){const n=nCym(),t=tomSlots().map(i=>'tom_'+i);
   t.forEach((k,i)=>LABEL[k]=t.length===1?'Tom':`Tom ${i+1}${i===0?' (highest)':i===t.length-1?' (lowest)':''}`);
-  ORDER=['kick','snare',...t,...BASE.slice(2),...(split&&n>1?[...Array(n).keys()].map(i=>'cymbal_'+i):['cymbal'])]}
+  ORDER=['kick','snare',...t,...BASE.slice(2),...(hits.some(h=>h.piece==='ride')?['ride']:[]),...(split&&n>1?[...Array(n).keys()].map(i=>'cymbal_'+i):['cymbal'])]}
 function nCym(){return hits.reduce((m,h)=>h.piece==='cymbal'?Math.max(m,(h.variant||0)+1):m,0)}
 const $=id=>document.getElementById(id);
 let split=false,sel=-1,job=null,hits=[],notes={},audio=null,ctx=null,buffers={},pxPerSec=80;
@@ -143,7 +143,7 @@ async function show(){
 }
 
 async function loadBuffers(){
-  const keys=[...BASE,'cymbal',...[0,1,2].map(i=>'cymbal_'+i),...[0,1,2,3,4,5].map(i=>'tom_'+i)],nb={};
+  const keys=[...BASE,'cymbal','ride',...[0,1,2].map(i=>'cymbal_'+i),...[0,1,2,3,4,5].map(i=>'tom_'+i)],nb={};
   await Promise.all(keys.map(async p=>{
     const r=await fetch(`/api/jobs/${job.id}/samples/${p}.wav?${Date.now()}`);
     if(r.ok)nb[p]=await ctx.decodeAudioData(await r.arrayBuffer());

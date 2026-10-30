@@ -7,6 +7,7 @@ GM_NOTES = {
     "hihat_closed": 42,
     "hihat_open": 46,
     "cymbal": 49,  # crash
+    "ride": 51,
 }
 PIECES = list(GM_NOTES)
 
