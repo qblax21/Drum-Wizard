@@ -30,7 +30,7 @@ Web MIDI kit triggering), hit select/reassign/delete (keys 1-9, Del, arrows), cy
 
 ## Known problems / next steps (highest value first)
 1. **Test on real songs/drum stems.** Everything so far was tuned on synthetic audio. Classifier thresholds are guesses.
-2. Cymbal decay tails re-trigger the onset detector, producing spurious cymbal hits (8 real -> 13 detected in a synthetic test). Add tail suppression.
+2. Cymbal tail suppression (`_suppress_cymbal_tails`) and a >6 kHz hat/cymbal layer (`_add_top_layer`) are in but only count-checked on the Dragon stem (kick 2028, snare 516, tom_high 463, cymbal 694, hats 653); nobody has listened to the result yet. Kick and tom counts look high; thresholds are still guesses.
 3. Pieces are not truly separated: overlapping sounds (cymbal ringing over a kick) confuse classification and samples carry bleed. A learned per-piece model (DrumSep-style) behind `classify_hit` is the real fix; check its license for commercial use.
 4. UI can't add a missed hit or change a hit's timing.
 5. Package as a desktop app (Tauri/Electron + bundled Python) once quality is acceptable.

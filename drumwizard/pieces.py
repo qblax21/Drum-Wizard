@@ -130,5 +130,68 @@ def detect_hits(y: np.ndarray, sr: int) -> list[Hit]:
         amp = np.abs(seg[: int(0.05 * sr)]).max() / peak
         vel = int(np.clip(round(20 + 107 * amp ** 0.7), 1, 127))
         hits.append(Hit(float(s / sr), classify_hit(seg, sr), vel, int(s), int(e)))
+    hits = _add_top_layer(y, sr, hits, peak)
+    hits = _suppress_cymbal_tails(y, sr, hits)
     assign_cymbal_variants(y, sr, hits)
     return hits
+
+
+HP_HZ = 6000
+COINCIDE = 0.03       # s: a high-band onset this close to a full-band hit is the same event
+TAIL_TAU = 0.45       # s: assumed cymbal amplitude decay constant
+TAIL_MARGIN = 1.5     # a hit must beat the decaying previous cymbal by this factor to count as new
+
+
+def _hp(y: np.ndarray, sr: int) -> np.ndarray:
+    from scipy.signal import butter, sosfilt
+    return sosfilt(butter(4, HP_HZ, "hp", fs=sr, output="sos"), y)
+
+
+def _add_top_layer(y: np.ndarray, sr: int, hits: list[Hit], peak: float) -> list[Hit]:
+    """Full-band detection labels a hat/cymbal hit under a kick or tom as that drum, or misses it.
+    Detect onsets in the >6 kHz band and add hat/cymbal hits the full-band pass did not already report."""
+    yh = _hp(y, sr)
+    hp_peak = np.abs(yh).max() + 1e-12
+    pad = int(0.1 * sr)
+    on = librosa.onset.onset_detect(y=np.pad(yh, (pad, 0)), sr=sr, units="samples", backtrack=False, delta=0.1,
+                                    wait=int(0.03 * sr / 512)) - pad
+    times = np.array([h.start for h in hits]) / sr
+    lead = int(0.003 * sr)
+    starts = np.maximum(on - lead, 0)
+    out = list(hits)
+    for i, s in enumerate(starts):
+        t = s / sr
+        near = np.nonzero(np.abs(times - t) < COINCIDE)[0] if len(times) else []
+        if any(hits[j].piece in ("snare", "hihat_closed", "hihat_open", "cymbal") for j in near):
+            continue   # already a hat/cymbal, or snare wires: not a separate hat
+        nxt = starts[i + 1] if i + 1 < len(starts) else len(y)
+        e = int(min(nxt, s + 1.5 * sr))
+        seg = yh[s:e]
+        if len(seg) < 32:
+            continue
+        amp = np.abs(seg[: int(0.05 * sr)]).max() / hp_peak
+        if amp < 0.05:
+            continue
+        piece = classify_hit(seg, sr)
+        if piece not in ("hihat_closed", "hihat_open", "cymbal"):
+            continue
+        vel = int(np.clip(round(20 + 107 * amp ** 0.7), 1, 127))
+        out.append(Hit(float(t), piece, vel, int(s), e))
+    return sorted(out, key=lambda h: h.start)
+
+
+def _suppress_cymbal_tails(y: np.ndarray, sr: int, hits: list[Hit]) -> list[Hit]:
+    """Drop cymbal/open-hat hits that are just the decaying tail of an earlier cymbal re-triggering the detector."""
+    yh = _hp(y, sr)
+    win = int(0.04 * sr)
+    keep: list[Hit] = []
+    ref_t, ref_a = -1e9, 0.0   # last real cymbal: when, and its high-band peak
+    for h in hits:
+        a = np.abs(yh[h.start:h.start + win]).max() if h.start < len(yh) else 0.0
+        if h.piece in ("cymbal", "hihat_open"):
+            expected = ref_a * np.exp(-(h.start / sr - ref_t) / TAIL_TAU)
+            if a < TAIL_MARGIN * expected:
+                continue
+            ref_t, ref_a = h.start / sr, a
+        keep.append(h)
+    return keep
