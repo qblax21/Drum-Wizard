@@ -8,7 +8,7 @@ future model licenses).
 
 ## Layout
 - `drumwizard/stems.py`: Demucs `htdemucs` drum isolation (needs `[separation]` extra). **Never run on real audio yet.**
-- `drumwizard/pieces.py`: onset detection + rule-based hit classification (`classify_hit`, the seam to swap for a learned model); `assign_cymbal_variants` clusters cymbal hits into 1-3 distinct cymbals.
+- `drumwizard/pieces.py`: onset detection + rule-based hit classification (`classify_hit`, the seam to swap for a learned model); `assign_cymbal_variants` clusters cymbal hits into 1-3 distinct cymbals. Toms are one `tom` piece; `assign_tom_variants` clusters them by pitch (f0) into up to 6 GM tom slots (`variant` = slot in `gm.TOM_NOTES`), each with its own lane, note and sample. Kick vs tom is decided by f0 (<68 Hz = kick).
 - `drumwizard/export.py`: MIDI writer (`note_for` resolves per-cymbal notes) and per-piece one-shot sample slicing.
 - `drumwizard/pipeline.py`: `run_pipeline()` used by both CLI and server.
 - `drumwizard/server.py` + `static/index.html`: FastAPI backend and single-page vanilla-JS UI (`drumwizard-ui` -> http://127.0.0.1:8765).
@@ -30,7 +30,7 @@ Web MIDI kit triggering), hit select/reassign/delete (keys 1-9, Del, arrows), cy
 
 ## Known problems / next steps (highest value first)
 1. **Test on real songs/drum stems.** Everything so far was tuned on synthetic audio. Classifier thresholds are guesses.
-2. Cymbal tail suppression (`_suppress_cymbal_tails`) and a >6 kHz hat/cymbal layer (`_add_top_layer`) are in but only count-checked on the Dragon stem (kick 2028, snare 516, tom_high 463, cymbal 694, hats 653); nobody has listened to the result yet. Kick and tom counts look high; thresholds are still guesses.
+2. Cymbal tail suppression (`_suppress_cymbal_tails`) and a >6 kHz hat/cymbal layer (`_add_top_layer`) are in but only count-checked on the Dragon stem (kick 2028, snare 516, tom_high 463, cymbal 694, hats 653); nobody has listened to the result yet. Kick count (2179) still looks high; tom pitch rules (`TOM_F0`, `TOM_MAX_HI`) are guesses from histograms, unverified by ear; toms stacked with a kick are labelled kick.
 3. Pieces are not truly separated: overlapping sounds (cymbal ringing over a kick) confuse classification and samples carry bleed. A learned per-piece model (DrumSep-style) behind `classify_hit` is the real fix; check its license for commercial use.
 4. UI can't add a missed hit or change a hit's timing.
 5. Package as a desktop app (Tauri/Electron + bundled Python) once quality is acceptable.

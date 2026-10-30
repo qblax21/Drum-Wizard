@@ -76,12 +76,12 @@ def test_rebuild_samples_after_reassign(tmp_path):
                 break
             time.sleep(.5)
         hits = j["hits"]
-        for h in hits:  # relabel every hit as a tom
-            h["piece"] = "tom_low"
+        for h in hits:  # relabel every hit as the lowest tom
+            h["piece"], h["variant"] = "tom", 0
         r = json.load(urllib.request.urlopen(urllib.request.Request(
             f"{base}/api/jobs/{jid}/samples", json.dumps({"hits": hits}).encode(),
             {"Content-Type": "application/json"})))
-        assert r["pieces"] == ["tom_low"]
-        assert urllib.request.urlopen(f"{base}/api/jobs/{jid}/samples/tom_low.wav").read()[:4] == b"RIFF"
+        assert r["pieces"] == ["tom_0"]
+        assert urllib.request.urlopen(f"{base}/api/jobs/{jid}/samples/tom_0.wav").read()[:4] == b"RIFF"
     finally:
         srv.should_exit = True

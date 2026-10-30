@@ -13,7 +13,7 @@ from pydantic import BaseModel
 import soundfile as sf
 
 from .export import write_midi, write_samples
-from .gm import CYMBAL_VARIANT_NOTES, GM_NOTES
+from .gm import CYMBAL_VARIANT_NOTES, GM_NOTES, TOM_VARIANT_NOTES
 from .pieces import Hit
 from .pipeline import run_pipeline
 
@@ -51,7 +51,7 @@ def _job(job_id: str) -> dict:
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
-    return {**_job(job_id), "default_notes": {**GM_NOTES, **CYMBAL_VARIANT_NOTES}}
+    return {**_job(job_id), "default_notes": {**GM_NOTES, **CYMBAL_VARIANT_NOTES, **TOM_VARIANT_NOTES}}
 
 
 @app.get("/api/jobs/{job_id}/audio")

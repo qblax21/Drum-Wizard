@@ -5,7 +5,7 @@ import mido
 import numpy as np
 import soundfile as sf
 
-from .gm import GM_NOTES
+from .gm import GM_NOTES, TOM_VARIANT_NOTES
 from .pieces import Hit
 
 
@@ -13,6 +13,9 @@ def note_for(hit: Hit, notes: dict) -> int:
     """Per-cymbal note if the caller mapped one (split mode), else the shared piece note."""
     if hit.piece == "cymbal" and f"cymbal_{hit.variant}" in notes:
         return notes[f"cymbal_{hit.variant}"]
+    if hit.piece == "tom":
+        k = f"tom_{hit.variant}"
+        return notes.get(k, TOM_VARIANT_NOTES.get(k, notes["tom"]))
     return notes[hit.piece]
 
 
@@ -37,13 +40,13 @@ def write_midi(hits: list[Hit], path: str | Path, bpm: float = 120.0, notes: dic
 
 
 def _sample_key(h: Hit) -> str:
-    return f"cymbal_{h.variant}" if h.piece == "cymbal" else h.piece
+    return f"{h.piece}_{h.variant}" if h.piece in ("cymbal", "tom") else h.piece
 
 
 def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path) -> dict[str, Path]:
     """Save the cleanest (loudest, least-bleeding) hit of each piece as a one-shot WAV.
 
-    Cymbals get a combined `cymbal.wav` plus one `cymbal_<n>.wav` per detected variant.
+    Toms get one `tom_<slot>.wav` per pitch. Cymbals get a combined `cymbal.wav` plus one `cymbal_<n>.wav` per detected variant.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -54,7 +57,7 @@ def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path) 
 
     best: dict[str, Hit] = {}
     for h in hits:
-        keys = [h.piece] + ([_sample_key(h)] if h.piece == "cymbal" else [])
+        keys = [_sample_key(h)] if h.piece == "tom" else [h.piece] + ([_sample_key(h)] if h.piece == "cymbal" else [])
         for k in keys:
             if better(h, best.get(k)):
                 best[k] = h

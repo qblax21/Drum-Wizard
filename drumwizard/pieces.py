@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import librosa
 import numpy as np
 
+from .gm import TOM_NOTES
+
 
 @dataclass
 class Hit:
@@ -16,11 +18,39 @@ class Hit:
     velocity: int     # 1..127
     start: int        # sample index of slice start
     end: int          # sample index of slice end (before next hit, capped)
-    variant: int = 0  # which distinct cymbal (only meaningful when piece == "cymbal")
+    variant: int = 0  # distinct cymbal, or tom slot by pitch (only meaningful for piece "cymbal"/"tom")
+
+
+KICK_F0 = 68          # Hz: kick fundamentals sit below this; toms above
+TOM_F0 = (70, 350)    # Hz
+TOM_MAX_HI = 0.12     # tom energy above 2 kHz stays small; snare wires/cymbal bleed push it past this
+MAX_TOMS = 6
+
+
+def pitch_feats(seg: np.ndarray, sr: int):
+    """(f0, tonality, share of energy above 2 kHz) of a hit's body, or None if the slice is too short for pitch."""
+    s = seg[int(0.004 * sr):int(0.124 * sr)]   # skip the stick click
+    n = len(s)
+    if n < 2048:
+        return None
+    sp = np.abs(np.fft.rfft(s * np.hanning(n), 16384)) ** 2
+    f = np.fft.rfftfreq(16384, 1 / sr)
+    m = (f >= 35) & (f <= 400)
+    f0 = f[m][np.argmax(sp[m])]
+    ton = sp[(f >= 0.88 * f0) & (f <= 1.12 * f0)].sum() / (sp[(f >= 35) & (f <= 4000)].sum() + 1e-12)
+    hi = sp[f >= 2000].sum() / (sp.sum() + 1e-12)
+    return float(f0), float(ton), float(hi)
 
 
 def classify_hit(seg: np.ndarray, sr: int) -> str:
     """Classify a short windowed hit from spectral shape and decay."""
+    pf = pitch_feats(seg, sr)
+    if pf:
+        f0, ton, hi = pf
+        if f0 < KICK_F0 and hi < 0.25:
+            return "kick"
+        if TOM_F0[0] <= f0 <= TOM_F0[1] and ton > 0.2 and hi < TOM_MAX_HI:
+            return "tom"
     n = min(len(seg), int(0.25 * sr))
     seg = seg[:n]
     if n < 64:
@@ -49,7 +79,7 @@ def classify_hit(seg: np.ndarray, sr: int) -> str:
         return "hihat_closed"
     if flat > 0.05 and mid > 0.35:
         return "snare"
-    return "tom_low" if centroid < 400 else "tom_high"
+    return "kick" if pf and pf[0] < KICK_F0 else "tom"
 
 
 MAX_CYMBALS = 3
@@ -111,6 +141,39 @@ def assign_cymbal_variants(y: np.ndarray, sr: int, hits: list[Hit]) -> int:
     return best_k
 
 
+def assign_tom_variants(y: np.ndarray, sr: int, hits: list[Hit]) -> int:
+    """Cluster tom hits by pitch; set Hit.variant to a slot in gm.TOM_NOTES (low to high). Returns how many toms were found.
+
+    Splits as finely as the pitches allow (up to MAX_TOMS): clusters must each hold a few hits and sit >= 3 semitones apart.
+    """
+    from sklearn.cluster import KMeans
+
+    toms = [h for h in hits if h.piece == "tom"]
+    if not toms:
+        return 0
+    f0 = []
+    for h in toms:
+        pf = pitch_feats(y[h.start:h.end], sr)
+        f0.append(pf[0] if pf else np.nan)
+    f0 = np.array(f0)
+    fill = np.nanmedian(f0) if not np.all(np.isnan(f0)) else 150.0
+    x = np.log2(np.where(np.isnan(f0), fill, f0)).reshape(-1, 1)
+    k, labels, centers = 1, np.zeros(len(x), int), x.mean(0)
+    for kk in range(min(MAX_TOMS, len(x) // 3), 1, -1):
+        km = KMeans(n_clusters=kk, n_init=10, random_state=0).fit(x)
+        c = np.sort(km.cluster_centers_.ravel())
+        if np.bincount(km.labels_).min() < max(3, 0.03 * len(x)) or np.diff(c).min() < 0.25:
+            continue
+        k, labels, centers = kk, km.labels_, km.cluster_centers_.ravel()
+        break
+    rank = {int(c): r for r, c in enumerate(np.argsort(np.atleast_1d(centers)))}
+    top = len(TOM_NOTES) - 1
+    for h, lab in zip(toms, labels):
+        r = rank[int(lab)]
+        h.variant = round(r * top / (k - 1)) if k > 1 else 2
+    return k
+
+
 def detect_hits(y: np.ndarray, sr: int) -> list[Hit]:
     # pad so a hit at t=0 still has a pre-roll for the detector
     pad = int(0.1 * sr)
@@ -133,6 +196,7 @@ def detect_hits(y: np.ndarray, sr: int) -> list[Hit]:
     hits = _add_top_layer(y, sr, hits, peak)
     hits = _suppress_cymbal_tails(y, sr, hits)
     assign_cymbal_variants(y, sr, hits)
+    assign_tom_variants(y, sr, hits)
     return hits
 
 
