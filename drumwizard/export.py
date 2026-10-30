@@ -43,30 +43,57 @@ def _sample_key(h: Hit) -> str:
     return f"{h.piece}_{h.variant}" if h.piece in ("cymbal", "tom") else h.piece
 
 
-def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path) -> dict[str, Path]:
-    """Save the cleanest (loudest, least-bleeding) hit of each piece as a one-shot WAV.
+# Seconds of undisturbed audio wanted per piece when choosing which hit to cut a sample from.
+SAMPLE_WANT = {"kick": 0.25, "snare": 0.3, "tom": 0.35, "hihat_closed": 0.12, "hihat_open": 0.3, "cymbal": 1.0}
+COINCIDE = 0.02   # s: another piece landing this close to a hit bleeds into its attack
 
-    Toms get one `tom_<slot>.wav` per pitch. Cymbals get a combined `cymbal.wav` plus one `cymbal_<n>.wav` per detected variant.
+
+def _room(hits: list[Hit], sr: int) -> list[tuple[bool, int]]:
+    """Per hit: (does another piece land on it, samples until the next hit that is not simultaneous with it)."""
+    order = sorted(range(len(hits)), key=lambda i: hits[i].start)
+    starts = np.array([hits[i].start for i in order])
+    out = [(False, 0)] * len(hits)
+    for pos, i in enumerate(order):
+        h, c = hits[i], int(COINCIDE * sr)
+        lo, hi = np.searchsorted(starts, h.start - c), np.searchsorted(starts, h.start + c, side="right")
+        near = [hits[order[j]] for j in range(lo, hi) if order[j] != i]
+        stacked = any(o.piece != h.piece for o in near)
+        later = starts[np.searchsorted(starts, h.start + c, side="right"):]
+        nxt = int(later[0]) if len(later) else h.end
+        out[i] = (stacked, min(h.end, nxt) - h.start)
+    return out
+
+
+def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path) -> dict[str, Path]:
+    """Save the cleanest hit of each piece as a one-shot WAV.
+
+    Cleanest = nothing else playing on its attack, then the most undisturbed room before the next hit (up to
+    SAMPLE_WANT), then loudest. Toms get one `tom_<slot>.wav` per pitch. Cymbals get a combined `cymbal.wav`
+    plus one `cymbal_<n>.wav` per detected variant.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    room = _room(hits, sr)
 
-    def better(h, cur):
-        return cur is None or h.velocity > cur.velocity or (
-            h.velocity == cur.velocity and h.end - h.start > cur.end - cur.start)
+    def score(i):
+        stacked, n = room[i]
+        return (not stacked, min(n, int(SAMPLE_WANT.get(hits[i].piece, 0.3) * sr)), hits[i].velocity)
 
-    best: dict[str, Hit] = {}
-    for h in hits:
+    best: dict[str, int] = {}
+    for i, h in enumerate(hits):
         keys = [_sample_key(h)] if h.piece == "tom" else [h.piece] + ([_sample_key(h)] if h.piece == "cymbal" else [])
         for k in keys:
-            if better(h, best.get(k)):
-                best[k] = h
+            if k not in best or score(i) > score(best[k]):
+                best[k] = i
     paths = {}
-    for key, h in best.items():
-        seg = y[h.start:h.end].copy()
-        fade = min(len(seg), int(0.01 * sr))
+    for key, i in best.items():
+        h = hits[i]
+        seg = y[h.start:h.start + max(room[i][1], 32)].copy()
+        loud = np.nonzero(np.abs(seg) > 0.003 * (np.abs(seg).max() + 1e-12))[0]   # drop the silent tail (-50 dB)
+        seg = seg[: min(len(seg), int(loud[-1]) + int(0.02 * sr))] if len(loud) else seg
+        fade = min(len(seg), int(0.03 * sr))
         if fade:
-            seg[-fade:] *= np.linspace(1, 0, fade)
+            seg[-fade:] *= np.cos(np.linspace(0, np.pi / 2, fade)) ** 2
         seg /= np.abs(seg).max() + 1e-12
         p = out_dir / f"{key}.wav"
         sf.write(str(p), seg, sr)

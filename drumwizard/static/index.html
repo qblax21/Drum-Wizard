@@ -96,9 +96,9 @@ const LABEL={kick:'Kick',snare:'Snare',tom_0:'Tom',tom_1:'Tom',tom_2:'Tom',tom_3
 const BASE=['kick','snare','hihat_closed','hihat_open'];
 let ORDER=[...BASE,'cymbal'];
 const keyOf=h=>split&&h.piece==='cymbal'?'cymbal_'+(h.variant||0):h.piece==='tom'?'tom_'+(h.variant||0):h.piece;
-function tomSlots(){const u=[...new Set(hits.filter(h=>h.piece==='tom').map(h=>h.variant||0))].sort((a,b)=>a-b);return u.length?u:[2]}
+function tomSlots(){const u=[...new Set(hits.filter(h=>h.piece==='tom').map(h=>h.variant||0))].sort((a,b)=>b-a);return u.length?u:[2]}
 function setLanes(){const n=nCym(),t=tomSlots().map(i=>'tom_'+i);
-  t.forEach((k,i)=>LABEL[k]=t.length===1?'Tom':`Tom ${i+1}${i===0?' (lowest)':i===t.length-1?' (highest)':''}`);
+  t.forEach((k,i)=>LABEL[k]=t.length===1?'Tom':`Tom ${i+1}${i===0?' (highest)':i===t.length-1?' (lowest)':''}`);
   ORDER=['kick','snare',...t,...BASE.slice(2),...(split&&n>1?[...Array(n).keys()].map(i=>'cymbal_'+i):['cymbal'])]}
 function nCym(){return hits.reduce((m,h)=>h.piece==='cymbal'?Math.max(m,(h.variant||0)+1):m,0)}
 const $=id=>document.getElementById(id);
