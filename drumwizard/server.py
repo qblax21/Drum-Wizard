@@ -108,5 +108,10 @@ app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True
 
 
 def main():
+    import argparse
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    p = argparse.ArgumentParser()
+    p.add_argument("--host", default="127.0.0.1", help="use a Tailscale IP or 0.0.0.0 for phone access")
+    p.add_argument("--port", type=int, default=8765)
+    a = p.parse_args()
+    uvicorn.run(app, host=a.host, port=a.port)
