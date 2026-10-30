@@ -22,24 +22,24 @@ JOBS: dict[str, dict] = {}
 app = FastAPI(title="Drum Wizard")
 
 
-def _run(job_id: str, src: Path, is_stem: bool):
+def _run(job_id: str, src: Path, is_stem: bool, drumsep: bool = False):
     job = JOBS[job_id]
     try:
-        job.update(status="processing", **run_pipeline(src, WORK / job_id / "out", is_stem))
+        job.update(status="processing", **run_pipeline(src, WORK / job_id / "out", is_stem, drumsep))
         job["status"] = "done"
     except Exception as e:  # surfaced to the UI
         job.update(status="error", error=str(e))
 
 
 @app.post("/api/jobs")
-async def create_job(file: UploadFile = File(...), is_stem: bool = Form(False)):
+async def create_job(file: UploadFile = File(...), is_stem: bool = Form(False), drumsep: bool = Form(False)):
     job_id = uuid.uuid4().hex[:10]
     d = WORK / job_id
     d.mkdir(parents=True)
     src = d / ("input" + Path(file.filename or "x.wav").suffix)
     src.write_bytes(await file.read())
     JOBS[job_id] = {"status": "queued", "name": file.filename}
-    threading.Thread(target=_run, args=(job_id, src, is_stem), daemon=True).start()
+    threading.Thread(target=_run, args=(job_id, src, is_stem, drumsep), daemon=True).start()
     return {"id": job_id}
 
 
@@ -81,7 +81,8 @@ def rebuild_samples(job_id: str, req: SamplesReq):
     y, sr = sf.read(str(out / "drums.wav"), dtype="float32")
     for old in (out / "samples").glob("*.wav"):
         old.unlink()
-    paths = write_samples(y, sr, [Hit(**h) for h in req.hits], out / "samples")
+    from .drumsep import load_sources
+    paths = write_samples(y, sr, [Hit(**h) for h in req.hits], out / "samples", load_sources(out / "stems"))
     return {"pieces": list(paths)}
 
 

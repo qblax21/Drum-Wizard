@@ -12,10 +12,11 @@ def main(argv=None):
     ap.add_argument("input", help="song file (or a drum stem with --stem)")
     ap.add_argument("-o", "--out", default="out")
     ap.add_argument("--stem", action="store_true", help="input is already an isolated drum stem")
+    ap.add_argument("--drumsep", action="store_true", help="split the drum stem into pieces with DrumSep (needs the drumsep extra)")
     a = ap.parse_args(argv)
 
     from .pieces import Hit
-    res = run_pipeline(a.input, a.out, a.stem)
+    res = run_pipeline(a.input, a.out, a.stem, a.drumsep)
     out = Path(a.out)
     hits = [Hit(**h) for h in res["hits"]]
     bpm = res["bpm"]

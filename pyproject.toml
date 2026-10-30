@@ -7,6 +7,7 @@ dependencies = ["numpy", "scipy", "soundfile", "librosa", "mido", "scikit-learn"
 
 [project.optional-dependencies]
 separation = ["demucs", "torch", "torchaudio"]   # stage 1: song -> drum stem
+drumsep = ["mdxnet-infer"]                      # optional: split drums into kit pieces (weights licence unclear)
 live = ["python-rtmidi", "sounddevice"]          # play samples from an e-drum kit
 server = ["fastapi", "uvicorn", "python-multipart"]
 dev = ["pytest"]

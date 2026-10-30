@@ -64,12 +64,14 @@ def _room(hits: list[Hit], sr: int) -> list[tuple[bool, int]]:
     return out
 
 
-def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path) -> dict[str, Path]:
+def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path,
+                  sources: dict[str, np.ndarray] | None = None) -> dict[str, Path]:
     """Save the cleanest hit of each piece as a one-shot WAV.
 
     Cleanest = nothing else playing on its attack, then the most undisturbed room before the next hit (up to
     SAMPLE_WANT), then loudest. Toms get one `tom_<slot>.wav` per pitch. Cymbals get a combined `cymbal.wav`
-    plus one `cymbal_<n>.wav` per detected variant.
+    plus one `cymbal_<n>.wav` per detected variant. `sources` maps a piece to its own stem (DrumSep); else all
+    samples are cut from `y`.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -88,7 +90,8 @@ def write_samples(y: np.ndarray, sr: int, hits: list[Hit], out_dir: str | Path) 
     paths = {}
     for key, i in best.items():
         h = hits[i]
-        seg = y[h.start:h.start + max(room[i][1], 32)].copy()
+        src = sources.get(h.piece, y) if sources else y
+        seg = src[h.start:h.start + max(room[i][1], 32)].copy()
         loud = np.nonzero(np.abs(seg) > 0.003 * (np.abs(seg).max() + 1e-12))[0]   # drop the silent tail (-50 dB)
         seg = seg[: min(len(seg), int(loud[-1]) + int(0.02 * sr))] if len(loud) else seg
         fade = min(len(seg), int(0.03 * sr))

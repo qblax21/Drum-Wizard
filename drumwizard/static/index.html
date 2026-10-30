@@ -43,6 +43,7 @@ td input[type=number]{width:70px;padding:4px 6px;background:var(--bg);border:1px
   <input type="file" id="file" accept="audio/*" class="hidden">
   <div class="row" style="margin-top:12px">
     <label><input type="checkbox" id="isStem"> File is already an isolated drum track (skip separation)</label>
+    <label><input type="checkbox" id="drumsep"> Split into kit pieces with DrumSep (better toms and cymbals; slower, needs the drumsep extra)</label>
     <span id="status"></span>
   </div>
 </section>
@@ -115,7 +116,7 @@ async function start(f){
   $('result').classList.add('hidden');
   const setStatus=(t,err)=>{$('status').textContent=t;$('status').className=err?'err':''};
   setStatus('Uploading '+f.name+'…');
-  const fd=new FormData();fd.append('file',f);fd.append('is_stem',$('isStem').checked);
+  const fd=new FormData();fd.append('file',f);fd.append('is_stem',$('isStem').checked);fd.append('drumsep',$('drumsep').checked);
   const r=await fetch('/api/jobs',{method:'POST',body:fd});
   const {id}=await r.json();
   const t0=Date.now();
