@@ -1,7 +1,8 @@
 """Local web UI backend. Run: drumwizard-ui  (serves http://127.0.0.1:8765)"""
 import io
-import tempfile
+import shutil
 import threading
+import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -16,31 +17,86 @@ import soundfile as sf
 from .edit import clean_hits, reslice
 from .export import write_midi, write_samples
 from .gm import GM_NOTES, TOM_VARIANT_NOTES, cymbal_variant_notes
+from .jobs import cleanup, data_dir, keep_days, load_jobs, max_upload_bytes, save_job
 from .pieces import Hit
 from .pipeline import run_pipeline
 
-WORK = Path(tempfile.mkdtemp(prefix="drumwizard-"))
-JOBS: dict[str, dict] = {}
+WORK = data_dir()
+WORK.mkdir(parents=True, exist_ok=True)
+JOBS: dict[str, dict] = load_jobs(WORK)   # jobs from earlier runs; ones cut off by a restart are marked failed
+cleanup(WORK, JOBS)
 app = FastAPI(title="Drum Wizard")
+
+
+class _TooLarge(Exception):
+    pass
+
+
+class UploadLimit:
+    """Reject an oversized upload as soon as its size is known (Content-Length) or exceeded (chunked), before it is
+    all read into memory or disk. Pure ASGI so it sees the raw body."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != "/api/jobs":
+            return await self.app(scope, receive, send)
+        limit = max_upload_bytes()
+        length = dict(scope["headers"]).get(b"content-length")
+        if length and length.isdigit() and int(length) > limit:
+            return await self._reject(send, limit)
+        seen = 0
+
+        async def counted():
+            nonlocal seen
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body", b""))
+                if seen > limit:
+                    raise _TooLarge
+            return msg
+
+        try:
+            await self.app(scope, counted, send)
+        except _TooLarge:
+            await self._reject(send, limit)
+
+    @staticmethod
+    async def _reject(send, limit):
+        body = ('{"detail":"File too large (limit %d MB)"}' % (limit // 1048576)).encode()
+        await send({"type": "http.response.start", "status": 413,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode()),
+                                (b"connection", b"close")]})
+        await send({"type": "http.response.body", "body": body})
+
+
+app.add_middleware(UploadLimit)
 
 
 def _run(job_id: str, src: Path, is_stem: bool, drumsep: bool = False):
     job = JOBS[job_id]
     try:
-        job.update(status="processing", **run_pipeline(src, WORK / job_id / "out", is_stem, drumsep))
+        job["status"] = "processing"
+        save_job(WORK, job_id, job)
+        job.update(**run_pipeline(src, WORK / job_id / "out", is_stem, drumsep))
         job["status"] = "done"
     except Exception as e:  # surfaced to the UI
         job.update(status="error", error=str(e))
+    save_job(WORK, job_id, job)
 
 
 @app.post("/api/jobs")
-async def create_job(file: UploadFile = File(...), is_stem: bool = Form(False), drumsep: bool = Form(False)):
+def create_job(file: UploadFile = File(...), is_stem: bool = Form(False), drumsep: bool = Form(False)):
+    cleanup(WORK, JOBS)
     job_id = uuid.uuid4().hex[:10]
     d = WORK / job_id
     d.mkdir(parents=True)
     src = d / ("input" + Path(file.filename or "x.wav").suffix)
-    src.write_bytes(await file.read())
-    JOBS[job_id] = {"status": "queued", "name": file.filename}
+    with src.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    JOBS[job_id] = {"status": "queued", "name": file.filename, "created": time.time()}
+    save_job(WORK, job_id, JOBS[job_id])
     threading.Thread(target=_run, args=(job_id, src, is_stem, drumsep), daemon=True).start()
     return {"id": job_id}
 
@@ -54,7 +110,8 @@ def _job(job_id: str) -> dict:
 @app.get("/api/features")
 def features():
     import importlib.util
-    return {"drumsep": importlib.util.find_spec("mdxnet_infer") is not None}
+    return {"drumsep": importlib.util.find_spec("mdxnet_infer") is not None,
+            "max_upload_mb": max_upload_bytes() // 1048576, "keep_days": keep_days()}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -136,4 +193,10 @@ def main():
     p.add_argument("--host", default="127.0.0.1", help="use a Tailscale IP or 0.0.0.0 for phone access")
     p.add_argument("--port", type=int, default=8765)
     a = p.parse_args()
+
+    def sweep():   # jobs older than DRUMWIZARD_KEEP_DAYS (7) are deleted, also while the server keeps running
+        while True:
+            time.sleep(3600)
+            cleanup(WORK, JOBS)
+    threading.Thread(target=sweep, daemon=True).start()
     uvicorn.run(app, host=a.host, port=a.port)

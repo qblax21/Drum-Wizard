@@ -25,3 +25,5 @@ drumwizard = ["static/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
+addopts = "-m 'not slow'"   # slow = real Demucs / DrumSep models; run them with: pytest -m slow
+markers = ["slow: runs a real separation model (needs the separation / drumsep extras and downloaded weights)"]

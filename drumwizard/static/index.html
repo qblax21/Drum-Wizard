@@ -119,19 +119,24 @@ drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
 drop.ondragleave=()=>drop.classList.remove('over');
 drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');if(e.dataTransfer.files[0])start(e.dataTransfer.files[0])};
 file.onchange=()=>file.files[0]&&start(file.files[0]);
-fetch('/api/features').then(r=>r.json()).then(f=>{const c=$('drumsep');c.checked=f.drumsep;c.disabled=!f.drumsep;if(!f.drumsep)c.parentElement.title='Install the drumsep extra to enable'}).catch(()=>{});
+let maxMb=0;
+fetch('/api/features').then(r=>r.json()).then(f=>{maxMb=f.max_upload_mb||0;const c=$('drumsep');c.checked=f.drumsep;c.disabled=!f.drumsep;if(!f.drumsep)c.parentElement.title='Install the drumsep extra to enable'}).catch(()=>{});
 
 async function start(f){
   $('result').classList.add('hidden');
   const setStatus=(t,err)=>{$('status').textContent=t;$('status').className=err?'err':''};
   setStatus('Uploading '+f.name+'…');
+  if(maxMb&&f.size>maxMb*1048576){setStatus(`${f.name} is ${(f.size/1048576).toFixed(0)} MB; the limit is ${maxMb} MB.`,true);return}
   const fd=new FormData();fd.append('file',f);fd.append('is_stem',$('isStem').checked);fd.append('drumsep',$('drumsep').checked);
   const r=await fetch('/api/jobs',{method:'POST',body:fd});
+  if(!r.ok){let m=r.statusText;try{m=(await r.json()).detail||m}catch(_){}setStatus('Upload failed: '+m,true);return}
   const {id}=await r.json();
   const t0=Date.now();
   while(true){
     await new Promise(r=>setTimeout(r,1000));
-    job=await (await fetch('/api/jobs/'+id)).json();
+    const jr=await fetch('/api/jobs/'+id);
+    if(jr.status===404){setStatus('This job no longer exists (jobs are kept for a week). Upload the file again.',true);return}
+    job=await jr.json();
     if(job.status==='error'){setStatus('Failed: '+job.error,true);return}
     if(job.status==='done')break;
     setStatus(`Separating drums… ${Math.round((Date.now()-t0)/1000)}s (this can take a few minutes for a full song)`);
