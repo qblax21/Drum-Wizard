@@ -189,3 +189,16 @@ def test_bad_edits_are_rejected_or_clamped(tmp_path):
         hits = [{"time": 99.0, "piece": "kick", "velocity": 500}]   # past the end, velocity out of range
         r = json.load(_post(f"{base}/api/jobs/{jid}/samples", {"hits": hits}))
         assert r["hits"][0]["time"] == j["duration"] and r["hits"][0]["velocity"] == 127
+
+
+def test_default_notes_keep_split_cymbals_off_the_ride_note(tmp_path):
+    with _serve(PORT + 5) as base:
+        jid, j = _make_job(base, tmp_path)
+        assert j["default_notes"]["cymbal_2"] == 51            # no ride in this job
+        hits = [dict(h) for h in j["hits"]] + [{"time": 1.2, "piece": "ride", "velocity": 90}]
+        r = json.load(_post(f"{base}/api/jobs/{jid}/samples", {"hits": hits}))
+        assert "ride" in r["pieces"]
+        data = _post(f"{base}/api/jobs/{jid}/midi", {"notes": {"cymbal_2": 51},
+                                                     "hits": hits + [{"time": 1.4, "piece": "cymbal", "variant": 2}]}).read()
+        got = [n for _, n in _midi_times(data, j["bpm"])]
+        assert got.count(51) == 1 and 52 in got                 # one ride on 51, the third cymbal is a china on 52

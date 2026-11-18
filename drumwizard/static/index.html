@@ -285,6 +285,7 @@ function select(k){
 }
 function edited(){
   setLanes();
+  if(hits.some(h=>h.piece==='ride')&&notes.cymbal_2===51)notes.cymbal_2=52;   // 51 is the ride's note
   $('meta').textContent=`${hits.length} hits · ${job.bpm.toFixed(0)} BPM · ${job.duration.toFixed(1)}s`;
   renderPieces();draw();
   clearTimeout(edited.t);edited.t=setTimeout(refreshSamples,400);

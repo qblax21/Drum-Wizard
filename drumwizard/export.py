@@ -5,7 +5,7 @@ import mido
 import numpy as np
 import soundfile as sf
 
-from .gm import GM_NOTES, TOM_VARIANT_NOTES
+from .gm import GM_NOTES, TOM_VARIANT_NOTES, crash_only
 from .pieces import Hit, pitch_feats
 
 
@@ -21,6 +21,8 @@ def note_for(hit: Hit, notes: dict) -> int:
 
 def write_midi(hits: list[Hit], path: str | Path, bpm: float = 120.0, notes: dict | None = None) -> None:
     notes = notes or GM_NOTES
+    if any(h.piece == "ride" for h in hits):
+        notes = crash_only(notes)   # a ride plays on 51: split cymbals must not share it
     tpb = 480
     mid = mido.MidiFile(ticks_per_beat=tpb)
     tr = mido.MidiTrack()

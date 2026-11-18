@@ -15,7 +15,7 @@ import soundfile as sf
 
 from .edit import clean_hits, reslice
 from .export import write_midi, write_samples
-from .gm import CYMBAL_VARIANT_NOTES, GM_NOTES, TOM_VARIANT_NOTES
+from .gm import GM_NOTES, TOM_VARIANT_NOTES, cymbal_variant_notes
 from .pieces import Hit
 from .pipeline import run_pipeline
 
@@ -59,7 +59,9 @@ def features():
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
-    return {**_job(job_id), "default_notes": {**GM_NOTES, **CYMBAL_VARIANT_NOTES, **TOM_VARIANT_NOTES}}
+    job = _job(job_id)
+    has_ride = any(h["piece"] == "ride" for h in job.get("hits", []))
+    return {**job, "default_notes": {**GM_NOTES, **cymbal_variant_notes(has_ride), **TOM_VARIANT_NOTES}}
 
 
 @app.get("/api/jobs/{job_id}/audio")

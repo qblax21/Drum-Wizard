@@ -44,3 +44,29 @@ def test_midi_note_follows_split_state():
     h = Hit(0, "cymbal", 100, 0, 10, variant=1)
     assert note_for(h, GM_NOTES) == 49                                 # collapsed: shared note
     assert note_for(h, {**GM_NOTES, **CYMBAL_VARIANT_NOTES}) == 57     # split: per-cymbal note
+
+
+def _midi_notes(hits, notes, tmp_path):
+    import mido
+    from drumwizard.export import write_midi
+    write_midi(hits, tmp_path / "x.mid", 120, notes)
+    return [m.note for m in mido.MidiFile(tmp_path / "x.mid").tracks[0] if m.type == "note_on"]
+
+
+def test_ride_and_third_split_cymbal_do_not_share_note_51(tmp_path):
+    split = {**GM_NOTES, **CYMBAL_VARIANT_NOTES}
+    assert split["cymbal_2"] == split["ride"] == 51          # the clash: both default to 51
+    cym = [Hit(i * 0.5, "cymbal", 100, 0, 10, variant=i) for i in range(3)]
+    ride = Hit(2.0, "ride", 100, 0, 10)
+    assert _midi_notes(cym, split, tmp_path) == [49, 57, 51]          # no ride: the bright cymbal may be the ride
+    got = _midi_notes(cym + [ride], split, tmp_path)
+    assert got == [49, 57, 52, 51]                                    # ride keeps 51, cymbals are crashes only
+    assert set(got[:3]) <= {49, 57, 52, 55}
+
+
+def test_crash_only_respects_free_crash_notes_and_leaves_other_notes():
+    from drumwizard.gm import crash_only, cymbal_variant_notes
+    assert cymbal_variant_notes(True)["cymbal_2"] == 52 and cymbal_variant_notes(False)["cymbal_2"] == 51
+    n = {**GM_NOTES, "cymbal_0": 49, "cymbal_1": 52, "cymbal_2": 51, "tom_0": 41}
+    out = crash_only(n)
+    assert out["cymbal_2"] == 57 and out["cymbal_0"] == 49 and out["cymbal_1"] == 52 and out["tom_0"] == 41
