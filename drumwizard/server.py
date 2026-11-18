@@ -3,6 +3,7 @@ import io
 import tempfile
 import threading
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 
 import soundfile as sf
 
+from .edit import clean_hits, reslice
 from .export import write_midi, write_samples
 from .gm import CYMBAL_VARIANT_NOTES, GM_NOTES, TOM_VARIANT_NOTES
 from .pieces import Hit
@@ -75,21 +77,32 @@ def sample(job_id: str, piece: str):
     return FileResponse(p, media_type="audio/wav")
 
 
+def _clean(raw: list[dict], job: dict) -> list[Hit]:
+    try:
+        return clean_hits(raw, job["duration"])
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 class SamplesReq(BaseModel):
     hits: list[dict]
 
 
 @app.post("/api/jobs/{job_id}/samples")
 def rebuild_samples(job_id: str, req: SamplesReq):
-    """Re-slice one-shot samples after the user edits hit labels; returns pieces that have a sample."""
-    _job(job_id)
+    """Re-slice one-shot samples after the user edits hits (relabel, add, move, delete).
+
+    Returns the pieces that have a sample and the hit list with slices fixed for moved/new hits."""
+    job = _job(job_id)
     out = WORK / job_id / "out"
     y, sr = sf.read(str(out / "drums.wav"), dtype="float32")
+    from .drumsep import load_sources
+    sources = load_sources(out / "stems")
+    hits = reslice(_clean(req.hits, job), sr, len(y), grouped=bool(sources))
     for old in (out / "samples").glob("*.wav"):
         old.unlink()
-    from .drumsep import load_sources
-    paths = write_samples(y, sr, [Hit(**h) for h in req.hits], out / "samples", load_sources(out / "stems"))
-    return {"pieces": list(paths)}
+    paths = write_samples(y, sr, hits, out / "samples", sources)
+    return {"pieces": list(paths), "hits": [asdict(h) for h in hits]}
 
 
 class MidiReq(BaseModel):
@@ -102,7 +115,7 @@ class MidiReq(BaseModel):
 def midi(job_id: str, req: MidiReq):
     job = _job(job_id)
     notes = {**GM_NOTES, **{k: max(0, min(127, v)) for k, v in req.notes.items()}}
-    hits = [Hit(**h) for h in (req.hits if req.hits is not None else job["hits"])]
+    hits = _clean(req.hits if req.hits is not None else job["hits"], job)
     buf = io.BytesIO()
     tmp = WORK / job_id / "tmp.mid"
     write_midi(hits, tmp, req.bpm or job["bpm"], notes)
